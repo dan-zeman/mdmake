@@ -137,7 +137,11 @@ foreach my $prvek (@makefile)
         # Figure out in which dimensions we will be moving.
         # $mdrule{rozmery} already enumerates the dimensions of the target file.
         # The source files may have some extra dimensions and may be lacking other dimensions.
-        my $var = pripravit_rozmery_v_pravidle(\%mdrule);
+        # %var will contain all dimensions whose value is not fixed for at least
+        # one file in the rule. File hashes in the rule will be updated so that
+        # each file knows its dimensions in this rule, as well as value of the
+        # dimension if the value is fixed.
+        my $var = pripravit_rozmery_v_pravidle(\%mdrule, \@seznam_rozmeru, $prozmer);
         my %var = %{$var};
         # Hash the current values of all dimensions so that we can easily use them in substitutions in commands.
         # (Only the fixed values now. The variable values will be added later in the loop.)
@@ -154,7 +158,7 @@ foreach my $prvek (@makefile)
         my @var = grep {exists($var{$_})} @seznam_rozmeru;
         print GMKF ("# Generating MD rule for the following dimensions: @var\n");
         # Expand all combinations of values in all participating dimensions.
-        my @index = map {{'r'=>$_, 'i'=>0, 'hi'=>$#{$rozmery{$_}{hodnoty}}}} @var;
+        my @index = map {{'r' => $_, 'i' => 0, 'hi' => $#{$rozmery{$_}{hodnoty}}}} @var;
         # Hash individual index items so that current value in each dimension can be easily accessed.
         my %index;
         map {$index{$_->{r}} = $_} @index;
@@ -662,23 +666,27 @@ sub zkontrolovat_rozmery_typu
 
 
 #------------------------------------------------------------------------------
-# Pro MD pravidlo zjistí seznam rozměrů, pro které se má pravidlo rozgenerovat
-# (jejich hodnoty se budou měnit). Současně ke každému zdrojovému i cílovému
-# souboru pravidla připraví seznam jeho rozměrů a u fixních rozměrů rovnou
-# vyplní i hodnoty.
+# Takes a MD rule and figures out the list of dimensions for which the rule
+# shall be expanded (their values will alternate). Furthermore, prepares a list
+# of dimensions for each file in the rule, and fills in the values of fixed
+# dimensions.
 #------------------------------------------------------------------------------
 sub pripravit_rozmery_v_pravidle
 {
-    my $mdrule = shift; # odkaz na hash
-    # Zjistit, ve kterých rozměrech se budeme pohybovat.
-    # $mdrule{rozmery} už vyjmenovává rozměry cílového souboru.
-    # Zdrojové soubory však mohou mít některé rozměry navíc, jiné jim zase můžou chybět.
+    my $mdrule = shift; # hash ref
+    my $seznam_rozmeru = shift; # array ref: all known dimensions
+    my $prozmer = shift; # last dimension (file type)
+    my @seznem_rozmeru = @{$seznam_rozmeru};
+    # Find out in which dimensions we will be moving.
+    # $mdrule{rozmery} already lists the dimensions of the target file.
+    # However, the source files may have extra dimensions or may lack some
+    # target dimensions.
     my %var;
     foreach my $s (@{$mdrule->{src}}, $mdrule->{tgt})
     {
-        # Některé zdrojové soubory nemusejí mít definovaný seznam rozměrů,
-        # jestliže nevznikají pravidlem, ale jsou to vstupní soubory celého systému.
-        # V tom případě u nich předpokládáme všechny známé rozměry.
+        # Some source files may not have a defined list of dimensions because
+        # they are input files of the whole system and are not built by a rule.
+        # In that case assume that they have all known dimensions.
         my @nazvy_rozmeru_typu;
         if(exists($rozmery_typu{$s->{typ}}))
         {
@@ -697,7 +705,8 @@ sub pripravit_rozmery_v_pravidle
                 'oddpred' => $rozmery{$rozmer}{oddpred},
                 'oddpo'   => $rozmery{$rozmer}{oddpo}
             );
-            # K rozměrům, jejichž hodnoty jsou v tomto pravidle fixní, si poznamenat i tyto hodnoty.
+            # For dimensions whose values are fixed for this rule and file,
+            # remember the fixed values.
             if($rozmer eq $prozmer)
             {
                 $zaznam{hodnota} = $s->{typ};
@@ -716,9 +725,11 @@ sub pripravit_rozmery_v_pravidle
             }
             push(@rozmery, \%zaznam);
         }
-        # Napsat si ke zdrojovému souboru jeho rozměry.
+        # Remember all dimensions of a file (source or target).
         $s->{rozmery} = \@rozmery;
     }
+    # %var contains all dimensions that have variable (non-fixed) value for at
+    # least one file in the rule.
     return \%var;
 }
 
