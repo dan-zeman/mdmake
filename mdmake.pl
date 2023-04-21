@@ -1,7 +1,8 @@
 #!/usr/bin/perl
-# Multidimenzionální make. Vygeneruje makefile a zavolá make.
-# https://wiki.ufal.ms.mff.cuni.cz/user:zeman:rizeni-pokusu-pomoci-makefilu#mdmake
-# Copyright © 2009 Dan Zeman <zeman@ufal.mff.cuni.cz>
+# Multidimensional make. It generates a makefile and calls the system make.
+# https://github.com/dan-zeman/mdmake
+# https://wiki.ufal.ms.mff.cuni.cz/user:zeman:mdmake
+# Copyright © 2009, 2023 Dan Zeman <zeman@ufal.mff.cuni.cz>
 # Licence: GNU GPL
 
 use utf8;
@@ -23,123 +24,123 @@ while(<MDMF>)
 {
     $iline++;
     my $radek = $_;
-    # Odstranit konec řádku.
+    # Remove the line break.
     $radek =~ s/\r?\n$//;
-    # Odstranit komentáře.
+    # Remove comments.
     $radek =~ s/\#.*//;
-    # Odstranit přebytečné mezery na konci řádku (kvůli hodnotám proměnných apod.)
+    # Remove extra spaces at the end of the line (because of variable values etc.)
     $radek =~ s/\s+$//;
-    # Obsahuje tento řádek přiřazení do proměnné? Mohly by to být hodnoty rozměru!
+    # Does this line contain a variable assignment? It could be values of a dimension!
     if($radek =~ m/^([A-Z0-9_]+)\s*=\s*(.*)$/)
     {
         my $promenna = $1;
         my $hodnota = $2;
-        # Zapisuje do globální proměnné %promenne.
+        # The function writes to global variable %promenne.
         zpracovat_promennou($promenna, $hodnota);
     }
-    # Je na tomto řádku definován seznam rozměrů?
+    # Does this line define the list of dimensions?
     if($radek =~ m/^\.MDIMS:\s*(.*)/)
     {
-        # Zapisuje do globálních proměnných %rozmery, @seznam_rozmeru a $prozmer.
+        # The function writes to global variables %rozmery, @seznam_rozmeru, and $prozmer.
         zpracovat_mdims($1);
     }
-    # Obsahuje tento řádek požadavek na hromadný cíl?
+    # Does this line define an "all" target?
     if($radek =~ m/^\.MDALL\s*:\s*(.*)/)
     {
         my @values = split(/\s+/, $1);
         push(@makefile_mdall, \@values);
         $_ = '';
     }
-    # Obsahuje tento řádek vstupní vícerozměrné pravidlo?
+    # Does this line define a multidimensional input rule?
     if($radek =~ m/^\.MDIN\s*:(.*)/)
     {
         my $mdin = $1;
-        # Před prvním vícerozměrným pravidlem musí proběhnout kontrola všech hodnot všech rozměrů.
+        # All values of all dimensions must be verified before the first multidimensional rule is processed.
         unless($kontrola_rozmeru_probehla)
         {
             $kontrola_rozmeru_probehla = 1;
-            # Zapisuje do globální proměnné %hodnota2rozmer.
+            # The function writes to global variable %hodnota2rozmer.
             zkontrolovat_rozmery();
         }
-        # Odstranit případné mezery na začátku (na konci už by měly být odstraněné).
+        # Remove leading spaces, if any (trailing spaces should be already removed).
         $mdin =~ s/^\s+//;
         my ($invalues, $infile) = split(/\s*<\s*/, $mdin);
         $_ = zpracovat_mdin($invalues, $infile);
     }
-    # Začíná na tomto řádku vícerozměrné pravidlo?
+    # Does a multidimensional rule start on this line?
     if($radek =~ m/^\.MDRULE/)
     {
-        # Před prvním vícerozměrným pravidlem musí proběhnout kontrola všech hodnot všech rozměrů.
+        # All values of all dimensions must be verified before the first multidimensional rule is processed.
         unless($kontrola_rozmeru_probehla)
         {
             $kontrola_rozmeru_probehla = 1;
-            # Zapisuje do globální proměnné %hodnota2rozmer.
+            # The function writes to global variable %hodnota2rozmer.
             zkontrolovat_rozmery();
         }
-        # Řádek začínající na .MDRULE akorát zapne čtení MD pravidla.
-        # S jeho zpracováním musíme počkat, až bude přečteno celé.
+        # The line starting with .MDRULE only initiates reading of a MD rule.
+        # We cannot process the rule until it is read completely.
         $cte_se_mdrule = 1;
         $_ = '';
     }
     elsif($cte_se_mdrule)
     {
-        # MD pravidlo musí být ukončeno prázdným řádkem.
-        # (Pozor! Kontrolujeme $_, nikoli $radek, jinak by se za prázdný řádek považoval i komentář uvnitř pravidla.)
+        # A MD rule must end with an empty line.
+        # (Warning! We are checking $_, not $radek, otherwise a comment within a rule would be considered as an empty line.)
         unless(m/^\s*$/)
         {
-            # Přidat aktuální řádek k MD pravidlu.
-            # Nezapisuje do globálních proměnných (ale čte je jako všichni).
+            # Add the current line to the MD rule.
+            # This function does not write to global variables (but it reads them as everybody else).
             zpracovat_radek_mdrule($radek, \%mdrule);
             $_ = '';
         }
-        # Zpracovat právě načtené MD pravidlo.
+        # Process the MD rule we just read.
         else
         {
-            # Zapisuje do globální proměnné %rozmery_typu.
+            # The function writes to global variable %rozmery_typu.
             zpracovat_mdrule(\%mdrule);
-            # Uložit pravidlo k pozdějšímu zpracování (až budou načtena všechna vícerozměrná pravidla).
+            # Save the rule for later processing (after all MD rules have been read).
             my %lokalni_kopie_mdr = %mdrule;
             push(@makefile, {'type' => 'mdrule', 'contents' => \%lokalni_kopie_mdr});
-            # MD pravidlo je zpracováno, vynulovat proměnné pro příští pravidlo.
+            # The MD rule is processed, clear the variables for the next rule.
             $cte_se_mdrule = 0;
             %mdrule = ();
         }
     }
-    # Pokud se výše nezjistilo, že aktuální řádek vyžaduje zvláštní zpracování, pak zůstal neprázdný a chceme ho opsat.
+    # If we did not realize above that the current line needs special processing, it stayed non-empty and we want to copy it.
     unless($_ eq '')
     {
         push(@makefile, {'type' => 'line', 'contents' => $_});
     }
 }
 close(MDMF);
-# Projít načtený soubor.
-# Řádky, které pro nás nejsou podstatné, prostě okopírovat do generovaného makefilu.
-# MD pravidla rozgenerovat.
+# Go through the file just read.
+# Lines that do not need special attention will be simply copied to the generated makefile.
+# MD rules will be expanded.
 open(GMKF, '>genmakefile.mak') or die("Cannot write genmakefile.mak: $!\n");
 foreach my $prvek (@makefile)
 {
     if($prvek->{type} eq 'line')
     {
-        # Opisované řádky obsahují i znak konce řádku.
+        # Copied lines include the line break character.
         print GMKF ($prvek->{contents});
     }
     elsif($prvek->{type} eq 'mdrule')
     {
         my %mdrule = %{$prvek->{contents}};
-        # Rozměry, které známe, se z pohledu konkrétního pravidla dělí do čtyř skupin:
-        #   1. typ: Poslední rozměr udává typ souboru, je tedy fixní, ale pro každý soubor pravidla jiný.
-        #   2. fix: V tomto pravidle má zafixovanou hodnotu, pro všechny soubory (které tento rozměr znají) stejnou.
-        #       2a: Některé zdrojové soubory mohou mít výjimku, tj. svou vlastní fixní hodnotu v nějakém rozměru, odlišnou
-        #           od hodnoty tohoto rozměru u jiných souborů.
-        #   3. var: Rozměry s proměnlivými hodnotami, podle nich se pravidlo rozgenerovává.
-        #   4. unk: Rozměry, které ani cíl, ani žádný zdrojový soubor tohoto pravidla nezná.
-        # Zjistit, ve kterých rozměrech se budeme pohybovat.
-        # $mdrule{rozmery} už vyjmenovává rozměry cílového souboru.
-        # Zdrojové soubory však mohou mít některé rozměry navíc, jiné jim zase můžou chybět.
+        # From the perspective of a given rule, known dimensions fall into one of four groups:
+        #   1. typ: The last dimension is the file type, it is thus fixed, but differently for each file in the rule.
+        #   2. fix: The dimension has a fixed value in this rule, same for all files that know this dimension.
+        #       2a: Some source files may have an exception, i.e., their own fixed value in a dimension, different
+        #           from the value of this dimension at the other files.
+        #   3. var: Dimensions with variable values, these are the dimensions in which the rule is expanded.
+        #   4. unk: Dimensions that are unknown for the target and all the source files of this rule.
+        # Figure out in which dimensions we will be moving.
+        # $mdrule{rozmery} already enumerates the dimensions of the target file.
+        # The source files may have some extra dimensions and may be lacking other dimensions.
         my $var = pripravit_rozmery_v_pravidle(\%mdrule);
         my %var = %{$var};
-        # Nahashovat si aktuální hodnoty všech rozměrů pro snadné záměny v příkazech.
-        # (Zatím jen fixní hodnoty, proměnlivé hodnoty doplníme později v cyklu.)
+        # Hash the current values of all dimensions so that we can easily use them in substitutions in commands.
+        # (Only the fixed values now. The variable values will be added later in the loop.)
         my %hodnoty;
         foreach my $rozmer (@seznam_rozmeru)
         {
@@ -148,20 +149,20 @@ foreach my $prvek (@makefile)
                 $hodnoty{$rozmer} = $mdrule{fix}{$rozmer};
             }
         }
-        # Hash %var obsahuje rozměry, jejichž hodnoty se v tomto pravidle mění.
-        # My je ale chceme v poli, kde budou ve správném pořadí.
+        # Hash %var contains the dimensions whose values alternate in this rule.
+        # However, we want them in an array, in the required order.
         my @var = grep {exists($var{$_})} @seznam_rozmeru;
         print GMKF ("# Generating MD rule for the following dimensions: @var\n");
-        # Rozgenerovat všechny kombinace hodnot ve všech zúčastněných rozměrech.
+        # Expand all combinations of values in all participating dimensions.
         my @index = map {{'r'=>$_, 'i'=>0, 'hi'=>$#{$rozmery{$_}{hodnoty}}}} @var;
-        # Nahashovat si jednotlivé položky indexu, abych snadno zjistil aktuální hodnotu v každém rozměru.
+        # Hash individual index items so that current value in each dimension can be easily accessed.
         my %index;
         map {$index{$_->{r}} = $_} @index;
         my $konec = 0;
         while(!$konec)
         {
-            # Aktuální indexy hodnot přepsat na hodnoty rozměrů.
-            # Nejdříve aktualizovat všeobecný hash hodnot, který bude později sloužit k substitucím v příkazech.
+            # Rewrite current value indices with values of dimensions.
+            # First update the global hash of values that will be later used for substitutions in commands.
             foreach my $rozmer (@seznam_rozmeru)
             {
                 if(exists($index{$rozmer}))
@@ -169,37 +170,37 @@ foreach my $prvek (@makefile)
                     $hodnoty{$rozmer} = $rozmery{$rozmer}{hodnoty}[$index{$rozmer}{i}];
                 }
             }
-            # Totéž ještě udělat zvlášť pro každý soubor.
+            # Do the same also separately for each file.
             foreach my $file (@{$mdrule{src}}, $mdrule{tgt})
             {
                 foreach my $rozmer (@{$file->{rozmery}})
                 {
-                    # Jestliže má soubor výjimku a svou vlastní fixní hodnotu rozměru, neohlížet se ani na to, zda je jinde rozměr proměnný.
+                    # If the file has an exception and its own fixed value of the dimension, do not care whether the dimension is variable for other files.
                     if(exists($file->{fix}{$rozmer->{nazev}}))
                     {
                         $rozmer->{hodnota} = $file->{fix}{$rozmer->{nazev}};
                     }
-                    # Hodnotu doplňovat pouze proměnlivým rozměrům.
+                    # Insert the value only for variable dimensions.
                     elsif(exists($var{$rozmer->{nazev}}))
                     {
                         $rozmer->{hodnota} = $hodnoty{$rozmer->{nazev}};
                     }
                 }
-                # Zkonstruovat cestu k souboru z aktuálních hodnot rozměrů.
+                # Construct the path to the file from the current values of dimensions.
                 $file->{cesta} = join('', map {$_->{oddpred}.$_->{hodnota}.$_->{oddpo}} (@{$file->{rozmery}}));
             }
-            # Zapamatovat si všechny vygenerované cílové soubory a hodnoty, ze kterých jsou poskládané jejich cesty.
-            # Na konci z nich budeme moci vygenerovat sdružené cíle.
+            # Remember all generated  target files and values that are used in their paths.
+            # We will use them in the end to generate aggregate targets.
             ulozit_vygenerovany_cil(\@allfiles, $mdrule{tgt});
-            # Zkonstruovat pravidlo ze jmen souborů.
+            # Construct the rule from the names of the files.
             my @zdrojsoubory = map {$_->{cesta}} @{$mdrule{src}};
             my $pravidlo = $mdrule{tgt}{cesta}.': '.join(' ', @zdrojsoubory);
             $pravidlo .= " $mdrule{dep}" if($mdrule{dep});
             print GMKF ("$pravidlo\n");
-            # Vypsat příkazy pravidla.
+            # Print the commands of the rule.
             my $prikazy_po_substituci = provest_substituce_v_prikazech(\%mdrule, \%hodnoty, $pravidlo);
             print GMKF (join('', @{$prikazy_po_substituci}));
-            # Zvýšit index.
+            # Increment the index.
             for(my $i = $#index; $i>=0; $i--)
             {
                 $index[$i]{i}++;
@@ -209,10 +210,10 @@ foreach my $prvek (@makefile)
                 }
                 else
                 {
-                    # $i-tý index nepřetekl, takže se zvýšení povedlo a vyšší indexy už nebudeme zvyšovat.
+                    # $i-th index did not overflow, so the increment succeeded and we will not increment the higher indices.
                     last;
                 }
-                # Jestliže přetekl i nejvyšší index, už jsme prošli všechny kombinace indexů a můžeme ukončit i vnější while.
+                # If the highest index overflew, we have visited all combinations of indices and we can terminate the outer while as well.
                 if($i==0)
                 {
                     $konec = 1;
@@ -221,7 +222,7 @@ foreach my $prvek (@makefile)
         }
     }
 }
-# Na závěr vygenerovat požadované hromadné cíle.
+# Finally generate the required aggregate targets.
 foreach my $values (@makefile_mdall)
 {
     my @cile;
@@ -251,7 +252,7 @@ foreach my $values (@makefile_mdall)
     }
 }
 close(GMKF);
-# V běžném provozu lze asi rovnou pustit GNU make. Ale při ladění mdmaku je lepší tady skončit.
+# In the standard workflow, we can now directly launch GNU make. But if we are debugging mdmake, it is better to stop here.
 if(0)
 {
     print STDERR ("Now call 'make -f genmakefile.mak' to use the generated makefile.\n");
@@ -269,7 +270,7 @@ else
 
 
 ###############################################################################
-# PODPROGRAMY
+# SUBROUTINES
 ###############################################################################
 
 
