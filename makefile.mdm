@@ -1,0 +1,314 @@
+# Makefile for ICON 2009 NLP Tools Contest (parsing Indian languages)
+# Adapted from Dan's makefile for CoNLL 2009 work cycle
+# Copyright © 2007, 2009 Dan Zeman <zeman@ufal.mff.cuni.cz>
+
+# Toto je zdrojový soubor pro mdmake.
+# Z něj se vygeneruje makefile pro GNU make.
+
+# Do not remove a file because it is considered intermediate.
+.SECONDARY:
+# Remove targets that had changed but their command ended with an error.
+.DELETE_ON_ERROR:
+
+# Where are the data sets?
+PROGDIR = /home/zeman/projekty/parser
+TOOLDIR = $(PARSINGROOT)/tools
+
+# Které proměnné obsahují hodnoty v jednotlivých rozměrech, a jak se z nich složí jméno souboru?
+# Povolené oddělovače jsou "/", "-" a ".".
+# Oddělovač, který je přilepen k názvu rozměru, se vynechá, pokud soubor tento rozměr nepoužívá.
+.MDIMS: ROUNDS/ LANGS/ DE TRAINTEST .PARSERS .STATES
+ROUNDS = oldtags newtags
+LANGS = hi bn te
+DE = d e
+TRAINTEST = train test
+PARSERS = dz malt mst voted
+STATES = conll mconll rmconll csts stat g.csts astat a.csts model parsed.conll parsed.rconll parsed.csts cmp.txt eval.txt check.txt
+
+.PHONY: all
+all: all_d
+.PHONY: final
+final: all_e group3.zip
+
+# This goal restricts morphological information in a CoNLL file so that the
+# data is not too sparse while preserving information vital to parsing.
+#
+.MDRULE
+.md.rul: rmconll < mconll
+.md.del: PARSERS
+.md.dep: conll_omezit_morfologii.pl
+	conll_omezit_morfologii.pl < $< > $@
+
+# This goal converts CoNLL files with morphology to CSTS. It discards parts of morphology and retains the rest.
+#
+.MDRULE
+.md.rul: csts < mconll
+.md.del: PARSERS
+	$(TOOLDIR)/conll2csts.pl -y 2006 -l $(*LANGS) < $< | \
+	  perl -pe 'if(m/<t>(.*?)<r>/) { my $$t = $$1; $$t =~ s/\t/|/g; $$t =~ s/\|g-.*?\|n-.*?\|p-[^|]*//; $$t =~ s/\|t-.*//; s/<t>.*?<r>/<t>$$t<r>/; }' > $@
+
+# This goal trains the DZ parser.
+#
+.MDRULE
+.md.rul: stat < csts
+.md.del: PARSERS
+.md.fxd: train
+	#($(TOOLDIR)/zmerit_vykon.pl $(PROGDIR)/train.pl < $< > $@) >& $*train.log
+	$(PROGDIR)/train.pl < $< > $@
+
+# This goal parses a CSTS file.
+#
+.MDRULE
+.md.rul: g.csts < csts stat
+.md.fix: test dz
+	#($(TOOLDIR)/zmerit_vykon.pl $(PROGDIR)/parse.pl -m $*.stat < $< > $@) >& $*parse.log
+	$(PROGDIR)/parse.pl -m $(*2) < $< > $@
+
+# This goal trains the syntactic-tag assigner.
+#
+.MDRULE
+.md.rul: astat < csts
+.md.fix: dz
+.md.fxd: train
+	$(PROGDIR)/atrain.pl < $< > $@
+
+# This goal assigns syntactic tags to dependencies.
+#
+.MDRULE
+.md.rul: a.csts < g.csts astat
+.md.fix: test dz
+.md.dep: $(PROGDIR)/aclass.pl
+	$(PROGDIR)/aclass.pl -m $(*2) -z mdgdz < $< > $@
+
+# This goal converts parsed CSTS to parsed CoNLL.
+# It also copies the CoNLL fields that are not available in CSTS
+# (or should not have been modified by the parser) from the original CoNLL input.
+#
+.MDRULE
+.md.rul: parsed.conll < a.csts
+.md.fix: test dz
+.md.dep: $(TOOLDIR)/csts2conll.pl
+	$(TOOLDIR)/csts2conll.pl -y 2006 < $< > $@
+
+# This goal trains the Malt parser.
+# Hindi: use POSTAG+case+postposition
+# Bangla, Telugu: use CPOSTAG only
+#
+.MDRULE
+.md.rul: model < rmconll
+.md.fxd: train
+.md.fix: hi malt
+.md.dep: $(PARSINGROOT)/malt-parser/scripts/train.pl
+	$(PARSINGROOT)/malt-parser/scripts/train.pl -a stacklazy < $< > $@
+
+.MDRULE
+.md.rul: model < conll
+.md.fxd: train
+.md.fix: bn malt
+.md.dep: $(PARSINGROOT)/malt-parser/scripts/train.pl
+	$(PARSINGROOT)/malt-parser/scripts/train.pl -a covproj < $< > $@
+
+.MDRULE
+.md.rul: model < conll
+.md.fxd: train
+.md.fix: te malt
+.md.dep: $(PARSINGROOT)/malt-parser/scripts/train.pl
+	$(PARSINGROOT)/malt-parser/scripts/train.pl -a stackeager < $< > $@
+
+# This goal parses a CoNLL file using the Malt parser.
+#
+.MDRULE
+.md.rul: parsed.conll < rmconll model
+.md.fix: test hi malt
+.md.dep: $(PARSINGROOT)/malt-parser/scripts/parse.pl
+	$(PARSINGROOT)/malt-parser/scripts/parse.pl -a stacklazy -g $(*2) < $< > $@
+
+.MDRULE
+.md.rul: parsed.conll < conll model
+.md.fix: test bn malt
+.md.dep: $(PARSINGROOT)/malt-parser/scripts/parse.pl
+	$(PARSINGROOT)/malt-parser/scripts/parse.pl -a covproj -g $(*2) < $< > $@
+
+.MDRULE
+.md.rul: parsed.conll < conll model
+.md.fix: test te malt
+.md.dep: $(PARSINGROOT)/malt-parser/scripts/parse.pl
+	$(PARSINGROOT)/malt-parser/scripts/parse.pl -a stackeager -g $(*2) < $< > $@
+
+# This goal trains the MST parser.
+# Warning: even on the small Indian data sets, and on the cluster, training takes 4 gigs and 1-2 hours.
+# Warning: projective training is default. Use option decode-type:non-proj.
+# Warning: this goal submits a job to the cluster and does not wait for it to terminate.
+#          It means that make will proceed to another goal without having the trained model ready.
+#
+.MDRULE
+.md.rul: model < rmconll
+.md.fix: mst
+.md.fxd: train
+	trainmst.pl train-file:$< model-name:$@
+
+# This goal parses a CoNLL file using the MST parser.
+# Warning: -Xmx1800m (suggested in documentation) is not enough. Go to cluster!
+# Warning: projective parsing is default. Use option decode-type:non-proj.
+# Warning: MST parser wants input with heads as numbers (not "_"), even though it will overwrite them.
+#
+.MDRULE
+.md.rul: parsed.conll < rmconll model
+.md.fix: test mst
+	mst.pl model-name:$(*2) test-file:$< output-file:$@
+
+# This goal reconstructs the contents of the CoNLL fields that should not have
+# been modified by the parser.
+#
+.MDRULE
+.md.rul: parsed.rconll < conll parsed.conll
+.md.fix: test
+	$(TOOLDIR)/conll2006merge.pl -i $< -s $(*2) > $@
+
+# This converts the outputs of the parsers to CSTS, which is needed to compare them to each other.
+#
+.MDRULE
+.md.rul: parsed.csts < parsed.rconll
+.md.fix: test
+	$(TOOLDIR)/conll2csts.pl -y 2006 -l $(*LANGS) < $< > $@
+
+# This goal compares the outputs of the three parsers (Malt, MST and DZ).
+# The result is oracle accuracy, i.e. upper limit to the accuracy achievable by parser combination.
+#
+.MDRULE
+.md.rul: cmp.txt < csts (parsed.csts malt) (parsed.csts mst) (parsed.csts dz)
+.md.del: PARSERS
+.md.fix: test
+.md.dep: $(TOOLDIR)/porovnat.pl
+	$(TOOLDIR)/porovnat.pl $< $(*2) $(*3) $(*4) > $@
+
+# The following goals use the outputs of the three parsers (Malt, MST and DZ) to vote about the ultimate outcome.
+#
+.MDRULE
+.md.rul: parsed.conll < (parsed.rconll malt) (parsed.rconll mst) (parsed.rconll dz)
+.md.fix: test hi voted
+.md.dep: $(TOOLDIR)/conll_vote.pl
+	$(TOOLDIR)/conll_vote.pl 8760 $(*1) 8616 $(*2) 7512 $(*3) > $@
+
+.MDRULE
+.md.rul: parsed.conll < (parsed.rconll malt) (parsed.rconll mst) (parsed.rconll dz)
+.md.fix: test bn voted
+.md.dep: $(TOOLDIR)/conll_vote.pl
+	$(TOOLDIR)/conll_vote.pl 8557 $(*1) 8570 $(*2) 5438 $(*3) > $@
+
+.MDRULE
+.md.rul: parsed.conll < (parsed.rconll malt) (parsed.rconll mst) (parsed.rconll dz)
+.md.fix: test te voted
+.md.dep: $(TOOLDIR)/conll_vote.pl
+	$(TOOLDIR)/conll_vote.pl 8104 $(*1) 7985 $(*2) 4578 $(*3) > $@
+
+# This goal evaluates parsed text and stores the evaluation in a file.
+#
+.MDRULE
+.md.rul: eval.txt < conll parsed.rconll
+.md.fix: d test
+	$(TOOLDIR)/conll-eval07.pl -g $< -s $(*2) > $@
+	@date >> eval.txt
+	@echo $@ >> eval.txt
+	@head -3 $@ >> eval.txt
+
+# This goal checks the format of the data that shall be submitted to the organizers.
+# (I am using a copy of the checking script that the organizers use.)
+# The checking script seems to return 1 even if a file passes the check, so ignore the exit status.
+#
+.MDRULE
+.md.rul: check.txt < parsed.rconll
+.md.fix: test voted
+	$(TOOLDIR)/validate_conll_2006_format.py -t system -s cycle $< > $@
+
+
+
+.MDALL: d
+.MDALL: e
+
+
+
+###############################################################################
+# The rest of this Makefile contains non-pattern rules for the individual data
+# files. Mostly they deal with copying data from the original folders, packing
+# them for submission, renaming to fit our naming conventions etc.
+###############################################################################
+
+
+
+# These rules copy the input files from their original locations and specify
+# their positions in all input dimensions.
+.MDIN: oldtags hi d train conll  < oldtags/hi/hindi_training.ssf.conll
+.MDIN: oldtags hi d train mconll < oldtags/hi/hindi_training.morph.conll
+.MDIN: oldtags hi d test  conll  < oldtags/hi/hindi_development.ssf.conll
+.MDIN: oldtags hi d test  mconll < oldtags/hi/hindi_development.morph.conll
+.MDIN: oldtags hi e test  conll  < oldtags/hi/hindi_testing.ssf.conll
+.MDIN: oldtags hi e test  mconll < oldtags/hi/hindi_testing.morph.conll
+.MDIN: oldtags bn d train conll  < oldtags/bn/bangla_training.ssf.conll
+.MDIN: oldtags bn d train mconll < oldtags/bn/bangla_training.morph.conll
+.MDIN: oldtags bn d test  conll  < oldtags/bn/bangla_development.ssf.conll
+.MDIN: oldtags bn d test  mconll < oldtags/bn/bangla_development.morph.conll
+.MDIN: oldtags bn e test  conll  < oldtags/bn/bangla_testing.ssf.conll
+.MDIN: oldtags bn e test  mconll < oldtags/bn/bangla_testing.morph.conll
+.MDIN: oldtags te d train conll  < oldtags/te/telugu_training.ssf.conll
+.MDIN: oldtags te d train mconll < oldtags/te/telugu_training.morph.conll
+.MDIN: oldtags te d test  conll  < oldtags/te/telugu_development.ssf.conll
+.MDIN: oldtags te d test  mconll < oldtags/te/telugu_development.morph.conll
+.MDIN: oldtags te e test  conll  < oldtags/te/telugu_testing.ssf.conll
+.MDIN: oldtags te e test  mconll < oldtags/te/telugu_testing.morph.conll
+
+.MDIN: newtags hi d train conll  < newtags/hi/hindi_training.ssf.conll
+.MDIN: newtags hi d train mconll < newtags/hi/hindi_training.morph.conll
+.MDIN: newtags hi d test  conll  < newtags/hi/hindi_development.ssf.conll
+.MDIN: newtags hi d test  mconll < newtags/hi/hindi_development.morph.conll
+.MDIN: newtags hi e test  conll  < newtags/hi/hindi_testing.ssf.conll
+.MDIN: newtags hi e test  mconll < newtags/hi/hindi_testing.morph.conll
+.MDIN: newtags bn d train conll  < newtags/bn/bangla_training.ssf.conll
+.MDIN: newtags bn d train mconll < newtags/bn/bangla_training.morph.conll
+.MDIN: newtags bn d test  conll  < newtags/bn/bangla_development.ssf.conll
+.MDIN: newtags bn d test  mconll < newtags/bn/bangla_development.morph.conll
+.MDIN: newtags bn e test  conll  < newtags/bn/bangla_testing.ssf.conll
+.MDIN: newtags bn e test  mconll < newtags/bn/bangla_testing.morph.conll
+.MDIN: newtags te d train conll  < newtags/te/telugu_training.ssf.conll
+.MDIN: newtags te d train mconll < newtags/te/telugu_training.morph.conll
+.MDIN: newtags te d test  conll  < newtags/te/telugu_development.ssf.conll
+.MDIN: newtags te d test  mconll < newtags/te/telugu_development.morph.conll
+.MDIN: newtags te e test  conll  < newtags/te/telugu_testing.ssf.conll
+.MDIN: newtags te e test  mconll < newtags/te/telugu_testing.morph.conll
+
+.MDRULE
+.md.rul: conll < (conll d train) (conll d test)
+.md.for: ROUNDS LANGS DE TRAINTEST
+.md.fix: e train
+	cat $(*1) $(*2) > $@
+
+.MDRULE
+.md.rul: mconll < (mconll d train) (mconll d test)
+.md.for: ROUNDS LANGS DE TRAINTEST
+.md.fix: e train
+	cat $(*1) $(*2) > $@
+
+
+
+# These goals rename the final data files and pack them as required by the organizers.
+# Instructions:
+# 1 zip file named according to the team login name, i.e. group3.zip
+# inside of the zip file, there should be three files, one for each language
+# multiple solutions can be uploaded as group3_1.zip, group3_2.zip etc.
+#
+ICON_SUBMIT_FILES = $(foreach round,$(ROUNDS),$(foreach lang,$(LANGS),submit/ICON2009-$(round)-$(lang)-group3.conll))
+# The -j option strips path from the filenames.
+group3.zip: $(ICON_SUBMIT_FILES)
+	zip -ju $@ $^
+submit/ICON2009-oldtags-hi-group3.conll: oldtags/hi/etest.voted.parsed.rconll oldtags/hi/etest.voted.check.txt
+	cp $< $@
+submit/ICON2009-oldtags-bn-group3.conll: oldtags/bn/etest.voted.parsed.rconll oldtags/bn/etest.voted.check.txt
+	cp $< $@
+submit/ICON2009-oldtags-te-group3.conll: oldtags/te/etest.voted.parsed.rconll oldtags/te/etest.voted.check.txt
+	cp $< $@
+submit/ICON2009-newtags-hi-group3.conll: newtags/hi/etest.voted.parsed.rconll newtags/hi/etest.voted.check.txt
+	cp $< $@
+submit/ICON2009-newtags-bn-group3.conll: newtags/bn/etest.voted.parsed.rconll newtags/bn/etest.voted.check.txt
+	cp $< $@
+submit/ICON2009-newtags-te-group3.conll: newtags/te/etest.voted.parsed.rconll newtags/te/etest.voted.check.txt
+	cp $< $@
