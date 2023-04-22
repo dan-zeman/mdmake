@@ -191,7 +191,12 @@ foreach my $prvek (@makefile)
                     }
                 }
                 # Construct the path to the file from the current values of dimensions.
-                $file->{cesta} = join('', map {$_->{oddpred}.$_->{hodnota}.$_->{oddpo}} (@{$file->{rozmery}}));
+                my @values_and_delimiters = map {[$_->{oddpred}, $_->{hodnota}, $_->{oddpo}]} (@{$file->{rozmery}});
+                die if(scalar(@values_and_delimiters) == 0); # sanity check
+                # No delimiters at the beginning and end. (But we do not check for double delimiters between two values.)
+                $values_and_delimiters[0][0] = '';
+                $values_and_delimiters[-1][2] = '';
+                $file->{cesta} = join('', map {join('', @{$_})} (@values_and_delimiters));
             }
             # Remember all generated  target files and values that are used in their paths.
             # We will use them in the end to generate aggregate targets.
