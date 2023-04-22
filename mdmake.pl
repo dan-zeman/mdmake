@@ -492,9 +492,14 @@ sub zpracovat_mdin
     zkontrolovat_rozmery_typu($typ, @rozmery_tohoto_typu);
     # Získat seznam rozměrů cílového souboru ve správném pořadí.
     my @rozmery_souboru = grep {exists($hodnota{$_})} @seznam_rozmeru;
-    # Sestavit cestu k cílovému souboru z hodnot v jednotlivých rozměrech.
-    my $cesta = join('', map {$rozmery{$_}{oddpred}.$hodnota{$_}.$rozmery{$_}{oddpo}} (@rozmery_souboru));
-    # Sestavit pravidlo pro zkopírování vstupního souboru.
+    # Construct the path to the file from the current values of dimensions.
+    my @values_and_delimiters = map {[$rozmery{$_}{oddpred}, $hodnota{$_}, $rozmery{$_}{oddpo}]} (@rozmery_souboru);
+    die if(scalar(@values_and_delimiters) == 0); # sanity check
+    # No delimiters at the beginning and end. (But we do not check for double delimiters between two values.)
+    $values_and_delimiters[0][0] = '';
+    $values_and_delimiters[-1][2] = '';
+    my $cesta = join('', map {join('', @{$_})} (@values_and_delimiters));
+    # Construct a rule to copy the input file.
     my $pravidlo = "$cesta: $infile\n\tcp \$< \$\@\n";
     return $pravidlo;
 }
